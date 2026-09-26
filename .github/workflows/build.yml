@@ -29,6 +29,7 @@ jobs:
         run: |
           set -e
           mkdir -p app/src/main/java/com/kidstv/launcher
+          mkdir -p app/src/main/res/values
 
           cat > settings.gradle <<'EOF'
           pluginManagement {
@@ -73,8 +74,8 @@ jobs:
                   applicationId "com.kidstv.launcher"
                   minSdk 23
                   targetSdk 28
-                  versionCode 2
-                  versionName "1.1-desktop-first"
+                  versionCode 3
+                  versionName "1.2-desktop-first-no-service"
               }
 
               buildTypes {
@@ -90,6 +91,19 @@ jobs:
           }
           EOF
 
+          cat > app/src/main/res/values/styles.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <style name="KidsTVTransparentTheme" parent="android:style/Theme.Translucent.NoTitleBar">
+                  <item name="android:windowIsTranslucent">true</item>
+                  <item name="android:windowBackground">@android:color/transparent</item>
+                  <item name="android:windowNoTitle">true</item>
+                  <item name="android:backgroundDimEnabled">false</item>
+                  <item name="android:windowDisablePreview">true</item>
+              </style>
+          </resources>
+          EOF
+
           cat > app/src/main/AndroidManifest.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android">
@@ -97,7 +111,6 @@ jobs:
               <uses-permission android:name="android.permission.INTERNET" />
               <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
               <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
-              <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
 
               <queries>
                   <package android:name="org.xbmc.kodi" />
@@ -107,19 +120,15 @@ jobs:
                   android:allowBackup="false"
                   android:label="Kids TV Launcher"
                   android:supportsRtl="true"
-                  android:theme="@android:style/Theme.DeviceDefault.NoActionBar"
+                  android:theme="@style/KidsTVTransparentTheme"
                   android:usesCleartextTraffic="true">
 
-                  <!--
-                    康佳自启动管理如果启动本 Activity：
-                    Activity 不显示界面，只启动后台监控服务后立即 finish，
-                    因此康佳原厂桌面仍可正常进入并负责拉起 Wi-Fi。
-                  -->
                   <activity
                       android:name=".MainActivity"
                       android:excludeFromRecents="true"
                       android:exported="true"
-                      android:theme="@android:style/Theme.NoDisplay">
+                      android:launchMode="singleTask"
+                      android:theme="@style/KidsTVTransparentTheme">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
@@ -137,12 +146,6 @@ jobs:
                       </intent-filter>
                   </receiver>
 
-                  <service
-                      android:name=".WatchService"
-                      android:enabled="true"
-                      android:exported="false"
-                      android:foregroundServiceType="dataSync" />
-
               </application>
           </manifest>
           EOF
@@ -151,64 +154,6 @@ jobs:
           package com.kidstv.launcher;
 
           import android.app.Activity;
-          import android.content.Intent;
-          import android.os.Bundle;
-
-          public class MainActivity extends Activity {
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-                  startWatchService();
-                  finish();
-                  overridePendingTransition(0, 0);
-              }
-
-              private void startWatchService() {
-                  Intent i = new Intent(this, WatchService.class);
-                  try {
-                      if (android.os.Build.VERSION.SDK_INT >= 26) {
-                          startForegroundService(i);
-                      } else {
-                          startService(i);
-                      }
-                  } catch (Throwable ignored) {
-                      try { startService(i); } catch (Throwable ignored2) {}
-                  }
-              }
-          }
-          EOF
-
-          cat > app/src/main/java/com/kidstv/launcher/BootReceiver.java <<'EOF'
-          package com.kidstv.launcher;
-
-          import android.content.BroadcastReceiver;
-          import android.content.Context;
-          import android.content.Intent;
-
-          public class BootReceiver extends BroadcastReceiver {
-              @Override
-              public void onReceive(Context context, Intent intent) {
-                  Intent i = new Intent(context, WatchService.class);
-                  try {
-                      if (android.os.Build.VERSION.SDK_INT >= 26) {
-                          context.startForegroundService(i);
-                      } else {
-                          context.startService(i);
-                      }
-                  } catch (Throwable ignored) {
-                      try { context.startService(i); } catch (Throwable ignored2) {}
-                  }
-              }
-          }
-          EOF
-
-          cat > app/src/main/java/com/kidstv/launcher/WatchService.java <<'EOF'
-          package com.kidstv.launcher;
-
-          import android.app.Notification;
-          import android.app.NotificationChannel;
-          import android.app.NotificationManager;
-          import android.app.Service;
           import android.content.Context;
           import android.content.Intent;
           import android.content.pm.PackageManager;
@@ -216,9 +161,8 @@ jobs:
           import android.net.LinkAddress;
           import android.net.LinkProperties;
           import android.net.Network;
-          import android.os.Build;
+          import android.os.Bundle;
           import android.os.Environment;
-          import android.os.IBinder;
 
           import java.io.BufferedReader;
           import java.io.InputStreamReader;
@@ -227,75 +171,46 @@ jobs:
           import java.net.Proxy;
           import java.net.URL;
 
-          public class WatchService extends Service {
+          public class MainActivity extends Activity {
 
               private static final String KODI_PACKAGE = "org.xbmc.kodi";
               private static final String CHECK_URL =
                       "http://192.168.31.225:8409/iptv/channels.m3u?mode=hls-direct";
 
-              // 至少给康佳原厂桌面 8 秒时间完成初始化；之后以“实际网络可用”为准。
-              private static final long INITIAL_DELAY_MS = 8000L;
-              private static final long CHECK_INTERVAL_MS = 1500L;
+              private static final long INITIAL_DELAY_MS = 12000L;
+              private static final long CHECK_INTERVAL_MS = 2000L;
               private static final int REQUIRED_STABLE_CHECKS = 3;
 
               private volatile boolean running = false;
+              private volatile boolean launchPosted = false;
               private Thread worker;
 
               @Override
-              public void onCreate() {
-                  super.onCreate();
-                  startAsForeground();
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  startMonitorIfNeeded();
               }
 
               @Override
-              public int onStartCommand(Intent intent, int flags, int startId) {
-                  if (!running) {
-                      running = true;
-                      worker = new Thread(this::monitorLoop, "KidsTV-Watch");
-                      worker.start();
-                  }
-                  return START_STICKY;
+              protected void onNewIntent(Intent intent) {
+                  super.onNewIntent(intent);
+                  setIntent(intent);
+                  startMonitorIfNeeded();
               }
 
               @Override
-              public void onDestroy() {
+              protected void onDestroy() {
                   running = false;
                   if (worker != null) worker.interrupt();
                   super.onDestroy();
               }
 
-              @Override
-              public IBinder onBind(Intent intent) {
-                  return null;
-              }
-
-              private void startAsForeground() {
-                  final String channelId = "kids_tv_launcher_status";
-                  NotificationManager nm =
-                          (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
-
-                  if (Build.VERSION.SDK_INT >= 26 && nm != null) {
-                      NotificationChannel ch = new NotificationChannel(
-                              channelId,
-                              "Kids TV Launcher",
-                              NotificationManager.IMPORTANCE_MIN);
-                      ch.setDescription("等待电视网络就绪后自动启动 Kodi");
-                      ch.setShowBadge(false);
-                      nm.createNotificationChannel(ch);
-                  }
-
-                  Notification.Builder b = Build.VERSION.SDK_INT >= 26
-                          ? new Notification.Builder(this, channelId)
-                          : new Notification.Builder(this);
-
-                  Notification n = b
-                          .setContentTitle("Kids TV")
-                          .setContentText("等待网络就绪")
-                          .setSmallIcon(android.R.drawable.ic_media_play)
-                          .setOngoing(true)
-                          .build();
-
-                  startForeground(1001, n);
+              private synchronized void startMonitorIfNeeded() {
+                  if (running) return;
+                  running = true;
+                  launchPosted = false;
+                  worker = new Thread(this::monitorLoop, "KidsTV-Monitor");
+                  worker.start();
               }
 
               private void monitorLoop() {
@@ -307,7 +222,7 @@ jobs:
 
                   int stable = 0;
 
-                  while (running) {
+                  while (running && !isFinishing()) {
                       boolean storage = isStorageReady();
                       boolean network = hasUsableIpv4Network();
                       boolean server = network && checkErsatzTv();
@@ -318,13 +233,13 @@ jobs:
                           stable = 0;
                       }
 
-                      if (stable >= REQUIRED_STABLE_CHECKS) {
-                          if (launchKodi()) {
-                              stopSelf();
-                              return;
-                          }
-                          // 如果系统当下阻止后台拉起 Activity，继续重试。
-                          stable = 0;
+                      if (stable >= REQUIRED_STABLE_CHECKS && !launchPosted) {
+                          launchPosted = true;
+                          runOnUiThread(() -> {
+                              if (!launchKodi()) {
+                                  launchPosted = false;
+                              }
+                          });
                       }
 
                       try {
@@ -372,8 +287,6 @@ jobs:
 
                   try {
                       URL u = new URL(CHECK_URL);
-
-                      // 明确绕过任何 HTTP 代理，防止局域网 ErsatzTV 请求再次被代理影响。
                       c = (HttpURLConnection) u.openConnection(Proxy.NO_PROXY);
                       c.setConnectTimeout(1800);
                       c.setReadTimeout(2200);
@@ -387,7 +300,6 @@ jobs:
                       r = new BufferedReader(new InputStreamReader(c.getInputStream()));
                       String first = r.readLine();
                       return first != null && first.startsWith("#EXTM3U");
-
                   } catch (Throwable ignored) {
                       return false;
                   } finally {
@@ -402,14 +314,39 @@ jobs:
                       Intent i = pm.getLaunchIntentForPackage(KODI_PACKAGE);
                       if (i == null) return false;
 
-                      i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                              | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                      i.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP
                               | Intent.FLAG_ACTIVITY_SINGLE_TOP);
 
                       startActivity(i);
+                      running = false;
+                      finish();
+                      overridePendingTransition(0, 0);
                       return true;
                   } catch (Throwable ignored) {
                       return false;
+                  }
+              }
+          }
+          EOF
+
+          cat > app/src/main/java/com/kidstv/launcher/BootReceiver.java <<'EOF'
+          package com.kidstv.launcher;
+
+          import android.content.BroadcastReceiver;
+          import android.content.Context;
+          import android.content.Intent;
+
+          public class BootReceiver extends BroadcastReceiver {
+              @Override
+              public void onReceive(Context context, Intent intent) {
+                  try {
+                      Intent i = new Intent(context, MainActivity.class);
+                      i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                              | Intent.FLAG_ACTIVITY_CLEAR_TOP
+                              | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+                      context.startActivity(i);
+                  } catch (Throwable ignored) {
+                      // Konka auto-start management can still launch MainActivity directly.
                   }
               }
           }
@@ -422,12 +359,12 @@ jobs:
         shell: bash
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk out/KidsTVLauncher-DesktopFirst-v1.1.apk
+          cp app/build/outputs/apk/debug/app-debug.apk out/KidsTVLauncher-DesktopFirst-v1.2.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: KidsTVLauncher-APK
-          path: out/KidsTVLauncher-DesktopFirst-v1.1.apk
+          name: KidsTVLauncher-APK-v1.2
+          path: out/KidsTVLauncher-DesktopFirst-v1.2.apk
           if-no-files-found: error
           retention-days: 30
