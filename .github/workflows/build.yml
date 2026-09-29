@@ -74,8 +74,8 @@ jobs:
                   applicationId "com.kidstv.launcher"
                   minSdk 23
                   targetSdk 28
-                  versionCode 4
-                  versionName "1.3-wired-lan"
+                  versionCode 5
+                  versionName "1.4-fastboot-wired"
               }
 
               buildTypes {
@@ -94,12 +94,11 @@ jobs:
           cat > app/src/main/res/values/styles.xml <<'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
-              <style name="KidsTVTransparentTheme" parent="android:style/Theme.Translucent.NoTitleBar">
-                  <item name="android:windowIsTranslucent">true</item>
-                  <item name="android:windowBackground">@android:color/transparent</item>
+              <style name="KidsTVStartupTheme" parent="android:style/Theme.Material.NoActionBar.Fullscreen">
                   <item name="android:windowNoTitle">true</item>
-                  <item name="android:backgroundDimEnabled">false</item>
+                  <item name="android:windowFullscreen">true</item>
                   <item name="android:windowDisablePreview">true</item>
+                  <item name="android:windowBackground">#161616</item>
               </style>
           </resources>
           EOF
@@ -120,7 +119,7 @@ jobs:
                   android:allowBackup="false"
                   android:label="Kids TV Launcher"
                   android:supportsRtl="true"
-                  android:theme="@style/KidsTVTransparentTheme"
+                  android:theme="@style/KidsTVStartupTheme"
                   android:usesCleartextTraffic="true">
 
                   <activity
@@ -128,7 +127,7 @@ jobs:
                       android:excludeFromRecents="true"
                       android:exported="true"
                       android:launchMode="singleTask"
-                      android:theme="@style/KidsTVTransparentTheme">
+                      android:theme="@style/KidsTVStartupTheme">
                       <intent-filter>
                           <action android:name="android.intent.action.MAIN" />
                           <category android:name="android.intent.category.LAUNCHER" />
@@ -156,8 +155,13 @@ jobs:
           import android.app.Activity;
           import android.content.Intent;
           import android.content.pm.PackageManager;
+          import android.graphics.Color;
           import android.os.Bundle;
           import android.os.Environment;
+          import android.view.Gravity;
+          import android.view.ViewGroup;
+          import android.widget.FrameLayout;
+          import android.widget.TextView;
 
           import java.io.BufferedReader;
           import java.io.InputStreamReader;
@@ -168,17 +172,12 @@ jobs:
           public class MainActivity extends Activity {
 
               private static final String KODI_PACKAGE = "org.xbmc.kodi";
-
-              // Dedicated wired Kids TV LAN:
-              // Linux/ErsatzTV = 10.10.10.10/24
-              // Konka TV       = 10.10.10.11/24
-              // TV Internet access is intentionally not required.
               private static final String CHECK_URL =
                       "http://10.10.10.10:8409/iptv/channels.m3u?mode=hls-direct";
 
-              private static final long INITIAL_DELAY_MS = 12000L;
-              private static final long CHECK_INTERVAL_MS = 2000L;
-              private static final int REQUIRED_STABLE_CHECKS = 3;
+              private static final long INITIAL_DELAY_MS = 2000L;
+              private static final long CHECK_INTERVAL_MS = 1000L;
+              private static final int REQUIRED_STABLE_CHECKS = 2;
 
               private volatile boolean running = false;
               private volatile boolean launchPosted = false;
@@ -187,6 +186,7 @@ jobs:
               @Override
               protected void onCreate(Bundle savedInstanceState) {
                   super.onCreate(savedInstanceState);
+                  showStartingScreen();
                   startMonitorIfNeeded();
               }
 
@@ -202,6 +202,22 @@ jobs:
                   running = false;
                   if (worker != null) worker.interrupt();
                   super.onDestroy();
+              }
+
+              private void showStartingScreen() {
+                  FrameLayout root = new FrameLayout(this);
+                  root.setBackgroundColor(Color.rgb(22, 22, 22));
+
+                  TextView text = new TextView(this);
+                  text.setText("Kids TV\nStarting...");
+                  text.setTextColor(Color.WHITE);
+                  text.setTextSize(30);
+                  text.setGravity(Gravity.CENTER);
+
+                  root.addView(text, new FrameLayout.LayoutParams(
+                          ViewGroup.LayoutParams.MATCH_PARENT,
+                          ViewGroup.LayoutParams.MATCH_PARENT));
+                  setContentView(root);
               }
 
               private synchronized void startMonitorIfNeeded() {
@@ -223,10 +239,6 @@ jobs:
 
                   while (running && !isFinishing()) {
                       boolean storage = isStorageReady();
-
-                      // Do not depend on Android Internet validation / active-network state.
-                      // The TV has no Internet by design. The wired LAN is considered ready
-                      // only when the actual ErsatzTV M3U can be fetched successfully.
                       boolean server = checkErsatzTv();
 
                       if (storage && server) {
@@ -268,8 +280,8 @@ jobs:
                   try {
                       URL u = new URL(CHECK_URL);
                       c = (HttpURLConnection) u.openConnection(Proxy.NO_PROXY);
-                      c.setConnectTimeout(1800);
-                      c.setReadTimeout(2200);
+                      c.setConnectTimeout(1200);
+                      c.setReadTimeout(1600);
                       c.setUseCaches(false);
                       c.setRequestMethod("GET");
                       c.setRequestProperty("Connection", "close");
@@ -326,7 +338,6 @@ jobs:
                               | Intent.FLAG_ACTIVITY_SINGLE_TOP);
                       context.startActivity(i);
                   } catch (Throwable ignored) {
-                      // Konka auto-start management can still launch MainActivity directly.
                   }
               }
           }
@@ -339,12 +350,12 @@ jobs:
         shell: bash
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk out/KidsTVLauncher-WiredLAN-v1.3.apk
+          cp app/build/outputs/apk/debug/app-debug.apk out/KidsTVLauncher-FastBoot-v1.4.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: KidsTVLauncher-APK-v1.3
-          path: out/KidsTVLauncher-WiredLAN-v1.3.apk
+          name: KidsTVLauncher-APK-v1.4
+          path: out/KidsTVLauncher-FastBoot-v1.4.apk
           if-no-files-found: error
           retention-days: 30
